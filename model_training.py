@@ -1,0 +1,390 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import KFold, cross_val_score
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel, Matern, WhiteKernel
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+import pickle
+import warnings
+
+warnings.filterwarnings('ignore')
+
+# 导入数据加载模块
+from correct_data_loading import load_and_match_data, preprocess_data
+
+
+def train_kriging_model(X, y):
+    """
+    训练克里金模型（高斯过程回归）
+
+    参数:
+    X: 标准化后的特征矩阵
+    y: 目标值
+
+    返回:
+    model: 训练好的克里金模型
+    """
+    print("正在训练克里金模型...")
+
+    # 定义核函数 - 尝试几种常用的核函数选项
+    # 1. Matérn核(nu=2.5)，适合工程领域不太平滑的函数
+    matern_kernel = ConstantKernel(1.0) * Matern(
+        length_scale=np.ones(X.shape[1]),
+        length_scale_bounds=(1e-3, 1e3),
+        nu=2.5
+    )
+
+    # 2. 带噪声的复合核
+    noise_kernel = matern_kernel + WhiteKernel(noise_level=0.1, noise_level_bounds=(1e-5, 1e2))
+
+    # 创建并训练模型
+    model = GaussianProcessRegressor(
+        kernel=noise_kernel,
+        alpha=1e-10,  # 数值稳定性参数
+        optimizer='fmin_l_bfgs_b',
+        n_restarts_optimizer=5,
+        normalize_y=False,  # 因为Y已经是对数形式
+        random_state=42
+    )
+
+    model.fit(X, y)
+
+    # 打印优化后的核函数参数
+    print("优化后的核函数参数:")
+    print(model.kernel_)
+
+    return model
+
+
+def train_polynomial_model(X, y, degree=2):
+    """
+    训练多项式回归模型
+
+    参数:
+    X: 标准化后的特征矩阵
+    y: 目标值
+    degree: 多项式的阶数
+
+    返回:
+    model: 训练好的多项式回归模型
+    """
+    print(f"正在训练{degree}阶多项式回归模型...")
+
+    # 创建多项式特征
+    poly_features = PolynomialFeatures(degree=degree, include_bias=True)
+
+    # 创建一个Pipeline
+    model = Pipeline([
+        ('poly', poly_features),
+        ('linear', LinearRegression())
+    ])
+
+    # 训练模型
+    model.fit(X, y)
+
+    # 输出模型信息
+    linear_model = model.named_steps['linear']
+    n_features = model.named_steps['poly'].n_output_features_
+    print(f"多项式特征数量: {n_features}")
+    print(f"模型系数数量: {len(linear_model.coef_)}")
+
+    return model
+
+
+def evaluate_model(model, X, y, model_name, cv=5):
+    """
+    评估模型性能
+
+    参数:
+    model: 训练好的模型
+    X: 特征矩阵
+    y: 目标值
+    model_name: 模型名称
+    cv: 交叉验证折数
+
+    返回:
+    metrics: 包含性能指标的字典
+    """
+    print(f"正在评估{model_name}...")
+
+    # 交叉验证
+    cv_rmse = np.sqrt(-cross_val_score(model, X, y,
+                                       scoring='neg_mean_squared_error',
+                                       cv=cv))
+    cv_r2 = cross_val_score(model, X, y,
+                            scoring='r2',
+                            cv=cv)
+
+    # 在全数据集上的性能
+    y_pred = model.predict(X)
+    mse = mean_squared_error(y, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y, y_pred)
+
+    # 计算预测的标准差（仅对克里金模型有效）
+    std = None
+    if model_name == "Kriging":
+        _, std = model.predict(X, return_std=True)
+
+    metrics = {
+        'model_name': model_name,
+        'rmse': rmse,
+        'r2': r2,
+        'cv_rmse_mean': np.mean(cv_rmse),
+        'cv_rmse_std': np.std(cv_rmse),
+        'cv_r2_mean': np.mean(cv_r2),
+        'cv_r2_std': np.std(cv_r2),
+        'y_pred': y_pred,
+        'pred_std': std,
+        'model': model
+    }
+
+    print(f"{model_name} RMSE: {rmse:.4f}")
+    print(f"{model_name} R²: {r2:.4f}")
+    print(f"{model_name} 交叉验证 RMSE: {np.mean(cv_rmse):.4f} ± {np.std(cv_rmse):.4f}")
+    print(f"{model_name} 交叉验证 R²: {np.mean(cv_r2):.4f} ± {np.std(cv_r2):.4f}")
+
+    return metrics
+
+
+def compare_models(kriging_metrics, poly_metrics, X, y, feature_names):
+    """
+    比较模型性能并可视化结果
+
+    参数:
+    kriging_metrics: 克里金模型的性能指标
+    poly_metrics: 多项式回归模型的性能指标
+    X: 特征矩阵
+    y: 目标值
+    feature_names: 特征名称
+    """
+    print("模型比较结果...")
+
+    # 创建比较表格
+    comparison_df = pd.DataFrame({
+        'Metric': ['RMSE', 'R²', 'CV RMSE', 'CV R²'],
+        'Kriging': [
+            f"{kriging_metrics['rmse']:.4f}",
+            f"{kriging_metrics['r2']:.4f}",
+            f"{kriging_metrics['cv_rmse_mean']:.4f} ± {kriging_metrics['cv_rmse_std']:.4f}",
+            f"{kriging_metrics['cv_r2_mean']:.4f} ± {kriging_metrics['cv_r2_std']:.4f}"
+        ],
+        'Polynomial': [
+            f"{poly_metrics['rmse']:.4f}",
+            f"{poly_metrics['r2']:.4f}",
+            f"{poly_metrics['cv_rmse_mean']:.4f} ± {poly_metrics['cv_rmse_std']:.4f}",
+            f"{poly_metrics['cv_r2_mean']:.4f} ± {poly_metrics['cv_r2_std']:.4f}"
+        ]
+    })
+
+    print("\n模型性能比较:")
+    print(comparison_df)
+
+    # 创建可视化
+    plt.figure(figsize=(12, 10))
+
+    # 1. 实际值 vs 预测值 - 克里金模型
+    plt.subplot(2, 2, 1)
+    plt.scatter(y, kriging_metrics['y_pred'], alpha=0.7)
+    plt.plot([y.min(), y.max()], [y.min(), y.max()], 'k--')
+    plt.xlabel('实际RCS值 (dBsm)')
+    plt.ylabel('预测RCS值 (dBsm)')
+    plt.title('克里金模型: 实际值 vs 预测值')
+
+    # 2. 实际值 vs 预测值 - 多项式回归
+    plt.subplot(2, 2, 2)
+    plt.scatter(y, poly_metrics['y_pred'], alpha=0.7)
+    plt.plot([y.min(), y.max()], [y.min(), y.max()], 'k--')
+    plt.xlabel('实际RCS值 (dBsm)')
+    plt.ylabel('预测RCS值 (dBsm)')
+    plt.title('多项式回归: 实际值 vs 预测值')
+
+    # 3. 残差图 - 克里金模型
+    plt.subplot(2, 2, 3)
+    residuals_kriging = y - kriging_metrics['y_pred']
+    plt.scatter(kriging_metrics['y_pred'], residuals_kriging, alpha=0.7)
+    plt.axhline(y=0, color='k', linestyle='--')
+    plt.xlabel('预测值')
+    plt.ylabel('残差')
+    plt.title('克里金模型: 残差图')
+
+    # 4. 残差图 - 多项式回归
+    plt.subplot(2, 2, 4)
+    residuals_poly = y - poly_metrics['y_pred']
+    plt.scatter(poly_metrics['y_pred'], residuals_poly, alpha=0.7)
+    plt.axhline(y=0, color='k', linestyle='--')
+    plt.xlabel('预测值')
+    plt.ylabel('残差')
+    plt.title('多项式回归: 残差图')
+
+    plt.tight_layout()
+    plt.savefig('model_comparison.png')
+
+    # 5. 克里金模型的预测不确定性（如果可用）
+    if kriging_metrics['pred_std'] is not None:
+        plt.figure(figsize=(10, 6))
+        # 按预测标准差排序
+        sort_idx = np.argsort(kriging_metrics['pred_std'])
+        plt.errorbar(np.arange(len(y)),
+                     kriging_metrics['y_pred'][sort_idx],
+                     yerr=1.96 * kriging_metrics['pred_std'][sort_idx],  # 95% 置信区间
+                     fmt='o',
+                     alpha=0.5,
+                     capsize=2)
+        plt.plot(np.arange(len(y)), y[sort_idx], 'rx', label='实际值')
+        plt.xlabel('样本索引 (按预测不确定性排序)')
+        plt.ylabel('RCS值 (dBsm)')
+        plt.title('克里金模型: 预测及95%置信区间')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('kriging_uncertainty.png')
+
+    # 6. 特征重要性分析
+    if X.shape[1] <= 20:  # 限制特征数量以保持图表可读性
+        plt.figure(figsize=(12, 6))
+
+        # 对克里金模型，查看核的特征长度尺度
+        if hasattr(kriging_metrics['model'], 'kernel_'):
+            plt.subplot(1, 2, 1)
+            # 提取长度尺度（较小的长度尺度表示更重要的特征）
+            if hasattr(kriging_metrics['model'].kernel_, 'k2') and hasattr(kriging_metrics['model'].kernel_.k2,
+                                                                           'length_scale'):
+                length_scales = kriging_metrics['model'].kernel_.k2.length_scale
+                if length_scales.size > 1:  # 各向异性核
+                    # 取倒数，使较小的长度尺度对应较大的重要性
+                    importance = 1.0 / length_scales
+                    # 归一化重要性
+                    importance = importance / importance.sum()
+
+                    # 按重要性排序
+                    sorted_idx = np.argsort(importance)[::-1]
+                    sorted_importance = importance[sorted_idx]
+                    sorted_names = [feature_names[i] for i in sorted_idx]
+
+                    plt.bar(sorted_names, sorted_importance)
+                    plt.title('克里金模型: 特征重要性 (基于长度尺度)')
+                    plt.xticks(rotation=45, ha='right')
+
+        # 对多项式模型，查看一阶系数的绝对值
+        if isinstance(poly_metrics['model'], Pipeline):
+            plt.subplot(1, 2, 2)
+            linear_model = poly_metrics['model'].named_steps['linear']
+            poly_features = poly_metrics['model'].named_steps['poly']
+
+            # 提取一阶项的系数
+            feature_indices = []
+            first_order_coefs = []
+
+            # 获取特征名称和对应的索引
+            feature_names_out = poly_features.get_feature_names_out()
+
+            # 为每个原始特征查找对应的一阶项
+            for i, name in enumerate(feature_names):
+                for j, feat_name in enumerate(feature_names_out):
+                    if feat_name == name:  # 匹配原始特征名
+                        feature_indices.append(j)
+                        first_order_coefs.append(abs(linear_model.coef_[j]))
+                        break
+
+            if feature_indices:
+                # 按重要性排序
+                sorted_idx = np.argsort(first_order_coefs)[::-1]
+                sorted_coefs = [first_order_coefs[i] for i in sorted_idx]
+                sorted_names = [feature_names[i] for i in sorted_idx]
+
+                plt.bar(sorted_names, sorted_coefs)
+                plt.title('多项式回归: 一阶项系数绝对值')
+                plt.xticks(rotation=45, ha='right')
+
+        plt.tight_layout()
+        plt.savefig('feature_importance.png')
+
+    return comparison_df
+
+
+def save_models(kriging_model, poly_model, scaler, feature_names):
+    """
+    保存训练好的模型
+
+    参数:
+    kriging_model: 克里金模型
+    poly_model: 多项式回归模型
+    scaler: 特征标准化器
+    feature_names: 特征名称
+    """
+    model_dict = {
+        'kriging_model': kriging_model,
+        'poly_model': poly_model,
+        'scaler': scaler,
+        'feature_names': feature_names
+    }
+
+    with open('rcs_prediction_models.pkl', 'wb') as f:
+        pickle.dump(model_dict, f)
+
+    print("模型已保存至 'rcs_prediction_models.pkl'")
+
+
+def main():
+    """主函数"""
+    # 设置随机种子
+    np.random.seed(42)
+
+    # 文件路径
+    rcs_file = "statistics_3G.csv"
+    params_file = "parameter_sorted.csv"
+
+    # 1. 加载和匹配数据
+    X, y, feature_names, model_ids, matched_data = load_and_match_data(rcs_file, params_file)
+
+    if len(X) == 0:
+        print("数据加载失败，无法进行建模")
+        return
+
+    # 2. 数据预处理
+    X_scaled, y, scaler = preprocess_data(X, y, feature_names)
+
+    # 3. 训练克里金模型
+    kriging_model = train_kriging_model(X_scaled, y)
+
+    # 4. 训练多项式回归模型
+    # 尝试不同的多项式阶数
+    best_poly_model = None
+    best_cv_score = float('-inf')
+    best_degree = 1
+
+    for degree in range(1, 4):  # 尝试1到3阶
+        poly_model = train_polynomial_model(X_scaled, y, degree)
+        cv_scores = cross_val_score(poly_model, X_scaled, y, cv=5, scoring='r2')
+        avg_score = np.mean(cv_scores)
+
+        print(f"{degree}阶多项式平均交叉验证R²: {avg_score:.4f}")
+
+        if avg_score > best_cv_score:
+            best_cv_score = avg_score
+            best_poly_model = poly_model
+            best_degree = degree
+
+    print(f"\n选择{best_degree}阶多项式作为最佳多项式模型")
+
+    # 5. 评估模型
+    kriging_metrics = evaluate_model(kriging_model, X_scaled, y, "Kriging")
+    poly_metrics = evaluate_model(best_poly_model, X_scaled, y, f"Polynomial (degree={best_degree})")
+
+    # 6. 比较模型
+    comparison_df = compare_models(kriging_metrics, poly_metrics, X_scaled, y, feature_names)
+
+    # 7. 保存模型
+    save_models(kriging_model, best_poly_model, scaler, feature_names)
+
+    print("\n建模完成！可视化结果已保存为PNG文件，模型已保存为PKL文件。")
+
+    return kriging_model, best_poly_model, scaler, X_scaled, y, feature_names, comparison_df
+
+
+if __name__ == "__main__":
+    main()
