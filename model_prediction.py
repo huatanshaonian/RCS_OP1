@@ -8,6 +8,33 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+# 添加中文字体支持函数
+def setup_chinese_font():
+    """
+    设置matplotlib支持中文显示
+    """
+    # 尝试设置支持中文的字体
+    try:
+        # 直接设置一些常见的中文字体
+        font_names = ['SimHei', 'Microsoft YaHei', 'SimSun', 'Arial Unicode MS']
+        font_found = False
+
+        for font_name in font_names:
+            try:
+                plt.rcParams['font.family'] = [font_name]
+                plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+                font_found = True
+                print(f"成功设置中文字体: {font_name}")
+                break
+            except:
+                continue
+
+        if not font_found:
+            print("未找到合适的中文字体，使用系统默认字体")
+
+    except Exception as e:
+        print(f"设置中文字体时出错: {str(e)}")
+
 def load_models(model_file='rcs_prediction_models.pkl'):
     """
     从磁盘加载已训练的模型
@@ -188,6 +215,7 @@ def sensitivity_analysis(base_design, model_dict, n_points=20, model_type='krigi
 
 
 def plot_sensitivity_results(sensitivity_results, top_n=None):
+    setup_chinese_font()
     """
     可视化敏感度分析结果
 
@@ -316,6 +344,7 @@ def explore_design_space(model_dict, param_ranges, n_samples=1000, target_rcs=No
 
 
 def visualize_response_surface(model_dict, param1, param2, param_ranges, fixed_params=None, resolution=20):
+
     """
     可视化两个参数的响应曲面
 

@@ -34,7 +34,7 @@
 首先运行数据加载脚本，将RCS数据与设计参数数据匹配：
 
 ```bash
-python correct_data_loading.py
+python data_loading.py
 ```
 
 此脚本会：
@@ -48,7 +48,7 @@ python correct_data_loading.py
 使用匹配好的数据训练预测模型：
 
 ```bash
-python model_training_with_corrected_data.py
+python model_training.py
 ```
 
 此脚本会：
@@ -65,7 +65,7 @@ python model_training_with_corrected_data.py
 使用训练好的模型进行预测和分析：
 
 ```bash
-python model_prediction_script.py
+python model_prediction.py
 ```
 
 此脚本提供以下功能：
