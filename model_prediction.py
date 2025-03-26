@@ -429,16 +429,26 @@ def example_usage():
 
     # 2. 预测单个设计
     design_params = {
-        'kw': 0.5,
-        'phi': 45,
-        'yita': 10,
-        'lam': 10,
+    #    'kw': 0.5,
+    #    'phi': 45,
+    #    'yita': 10,
+    #    'lam': 10,
+    #    'Lf': 0.7,
+    #    'Ht': 0.4,
+    #    'Nc': 2.0,
+    #    'Theta': 10,
+    #    'R': 15,
+    #    'Beta': 8
+        'kw': 0.439,
+        'phi': 43.3,
+        'yita': 17.4,
+        'lam': 5.4,
         'Lf': 0.7,
-        'Ht': 0.4,
-        'Nc': 2.0,
-        'Theta': 10,
-        'R': 15,
-        'Beta': 8
+        'Ht': 0.32,
+        'Nc': 2.429,
+        'Theta': 12.809,
+        'R': 5,
+        'Beta': 7
     }
 
     rcs_pred, uncertainty = predict_rcs(design_params, model_dict)

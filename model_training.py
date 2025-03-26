@@ -481,8 +481,8 @@ def main():
     np.random.seed(42)
 
     # 文件路径
-    rcs_file = r"C:\Users\20787\Desktop\data\parameter\statistics_3G.csv"
-    params_file = r"C:\Users\20787\Desktop\data\parameter\parameters_sorted.csv"
+    rcs_file = r"..\parameter\statistics_3G.csv"
+    params_file = r"..\parameter\parameters_sorted.csv"
 
     # 1. 加载和匹配数据
     X, y, feature_names, model_ids, matched_data = load_and_match_data(rcs_file, params_file)
